@@ -1,8 +1,9 @@
 const $=id=>document.getElementById(id);
 const METERS=['1/4','2/4','3/4','4/4','5/4','6/4','3/8','5/8','6/8','7/8','9/8','12/8'];
-const defaults={bpm:105,meter:'4/4',division:1,accent:true,volume:70,mute:false};
+const BACKGROUNDS={current:{name:'現在の色',color:'#eef0f3'},blue:{name:'ブルー',color:'#eaf3fa'},mint:{name:'ミント',color:'#eaf5ef'},pink:{name:'ピンク',color:'#faeef1'},beige:{name:'ベージュ',color:'#f6f0e5'},gray:{name:'グレー',color:'#e7ebef'}};
+const defaults={bpm:105,meter:'4/4',division:1,accent:true,volume:70,mute:false,background:'current'};
 let s={...defaults};try{Object.assign(s,JSON.parse(localStorage.getItem('blue-tempo-v1'))||{})}catch{}
-const clamp=(n,a,b)=>Math.min(b,Math.max(a,n));s.bpm=clamp(Math.round(Number(s.bpm)||105),30,300);if(!METERS.includes(s.meter))s.meter='4/4';if(![1,2,3,4].includes(+s.division))s.division=1;s.division=+s.division;s.volume=clamp(Number(s.volume)||0,0,100);s.accent=!!s.accent;s.mute=!!s.mute;
+const clamp=(n,a,b)=>Math.min(b,Math.max(a,n));s.bpm=clamp(Math.round(Number(s.bpm)||105),30,300);if(!METERS.includes(s.meter))s.meter='4/4';if(![1,2,3,4].includes(+s.division))s.division=1;s.division=+s.division;s.volume=clamp(Number(s.volume)||0,0,100);s.accent=!!s.accent;s.mute=!!s.mute;if(!Object.hasOwn(BACKGROUNDS,s.background))s.background='current';
 let ctx,master,running=false,starting=false,timer,next=0,tick=0,queue=[],lastBeat=null,frame,voices=new Set(),wake;
 let drag=null;
 // Keep the full handle inside the arm at either BPM limit.
@@ -18,7 +19,7 @@ function syncSwing(){
 function syncWeight(){const w=$('weight');w.style.top=weightPosition()+'px';w.setAttribute('aria-valuenow',s.bpm);w.setAttribute('aria-valuetext',s.bpm+' BPM')}
 function save(){try{localStorage.setItem('blue-tempo-v1',JSON.stringify(s))}catch{}}
 function dots(){ $('beats').replaceChildren(...Array.from({length:parseInt(s.meter)},(_,i)=>{let d=document.createElement('i');if(i===0&&s.accent)d.className='first';return d}))}
-function render(){ syncWeight();$('bpm').value=s.bpm;$('meter').textContent=s.meter;$('meter').setAttribute('aria-label','拍子を選択 現在 '+s.meter);for(const button of $('meter-grid').children)button.setAttribute('aria-pressed',button.dataset.meter===s.meter); $('division').value=s.division;$('accent').checked=s.accent;$('accent-state').textContent=s.accent?'ON':'OFF';$('volume').value=s.volume;$('mute').textContent=s.mute?'音 OFF':'音 ON';$('mute').setAttribute('aria-pressed',s.mute);$('mark').textContent=s.bpm<60?'Largo':s.bpm<76?'Adagio':s.bpm<108?'Andante':s.bpm<120?'Moderato':s.bpm<168?'Allegro':'Presto';if(master)master.gain.setValueAtTime(s.mute?0:s.volume/100,ctx.currentTime);save()}
+function render(){ syncBackground();syncWeight();$('bpm').value=s.bpm;$('meter').textContent=s.meter;$('meter').setAttribute('aria-label','拍子を選択 現在 '+s.meter);for(const button of $('meter-grid').children)button.setAttribute('aria-pressed',button.dataset.meter===s.meter); $('division').value=s.division;$('accent').checked=s.accent;$('accent-state').textContent=s.accent?'ON':'OFF';$('volume').value=s.volume;$('mute').textContent=s.mute?'音 OFF':'音 ON';$('mute').setAttribute('aria-pressed',s.mute);$('mark').textContent=s.bpm<60?'Largo':s.bpm<76?'Adagio':s.bpm<108?'Andante':s.bpm<120?'Moderato':s.bpm<168?'Allegro':'Presto';if(master)master.gain.setValueAtTime(s.mute?0:s.volume/100,ctx.currentTime);save()}
 function bpm(n){if(Number.isFinite(n)){s.bpm=clamp(Math.round(n),30,300);render()}}
 function sound(t,strong,sub){let o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=sub?900:strong?1800:1200;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(sub?.22:.65,t+.001);g.gain.exponentialRampToValueAtTime(.001,t+.035);o.connect(g);g.connect(master);o.start(t);o.stop(t+.04);voices.add(o);o.onended=()=>{voices.delete(o);o.disconnect();g.disconnect()}}
 function schedule(){if(!running)return;if(next<ctx.currentTime-.05){stop('再生が中断されました。STARTで再開');return}while(next<ctx.currentTime+.1){const count=parseInt(s.meter),sub=tick%s.division,beat=Math.floor(tick/s.division)%count;const dur=60/s.bpm/s.division;sound(next,s.accent&&beat===0&&sub===0,sub!==0);if(sub===0)queue.push({time:next,beat,serial:Math.floor(tick/s.division),duration:60/s.bpm});next+=dur;tick++}}
@@ -38,10 +39,70 @@ for(const meter of METERS){
  };
  $('meter-grid').append(button);
 }
-$('meter').onclick=()=>{meterDialog.showModal();document.body.style.overflow='hidden';[...$('meter-grid').children].find(b=>b.dataset.meter===s.meter)?.focus()};
-$('meter-close').onclick=()=>meterDialog.close();
-meterDialog.addEventListener('click',e=>{if(e.target!==meterDialog)return;const r=meterDialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)meterDialog.close()});
-meterDialog.addEventListener('close',()=>{document.body.style.overflow='';$('meter').focus()});
+// All panels use native dialogs for focus trapping, Escape and background isolation.
+let modalOverflow=null;
+function releaseModalScroll(){
+ if(!document.querySelector('dialog[open]')&&modalOverflow!==null){document.body.style.overflow=modalOverflow;modalOverflow=null}
+}
+function wireDialog(dialog,trigger,closeButton){
+ dialog.addEventListener('close',()=>{
+  releaseModalScroll();
+  // Do not steal focus from a new input started after close() but before this event.
+  if(document.activeElement===document.body||dialog.contains(document.activeElement))trigger.focus();
+ });
+ closeButton.onclick=()=>{dialog.close();releaseModalScroll()};
+ dialog.addEventListener('click',e=>{
+  if(e.target!==dialog)return;
+  const r=dialog.getBoundingClientRect();
+  if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();
+ });
+ return ()=>{finishDrag();if(modalOverflow===null)modalOverflow=document.body.style.overflow;dialog.showModal();document.body.style.overflow='hidden'};
+}
+const openMeter=wireDialog(meterDialog,$('meter'),$('meter-close'));
+$('meter').onclick=()=>{openMeter();[...$('meter-grid').children].find(b=>b.dataset.meter===s.meter)?.focus()};
+const openSettings=wireDialog($('settings-dialog'),$('settings-open'),$('settings-close'));
+$('settings-open').onclick=()=>{openSettings();document.querySelector('.settings-tabs [aria-selected="true"]').focus()};
+const tabs=[$('sound-tab'),$('background-tab')];
+function selectTab(tab){
+ for(const item of tabs){
+  const selected=item===tab;item.setAttribute('aria-selected',selected);item.tabIndex=selected?0:-1;
+  $(item.getAttribute('aria-controls')).hidden=!selected;
+ }
+}
+for(const tab of tabs){
+ tab.onclick=()=>selectTab(tab);
+ tab.onkeydown=e=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+  e.preventDefault();const target=e.key==='Home'?tabs[0]:e.key==='End'?tabs[1]:tabs[1-tabs.indexOf(tab)];
+  selectTab(target);target.focus();
+ };
+}
+function syncBackground(){
+ const color=BACKGROUNDS[s.background].color;
+ document.documentElement.style.setProperty('--page-background',color);
+ document.querySelector('meta[name="theme-color"]').content=color;
+ for(const button of $('background-options').children)button.setAttribute('aria-pressed',button.dataset.background===s.background);
+}
+for(const [key,option] of Object.entries(BACKGROUNDS)){
+ const button=document.createElement('button');button.type='button';button.dataset.background=key;
+ const swatch=document.createElement('span');swatch.className='color-swatch';swatch.style.backgroundColor=option.color;swatch.setAttribute('aria-hidden','true');
+ button.append(swatch,document.createTextNode(option.name));button.setAttribute('aria-pressed',key===s.background);
+ button.onclick=()=>{s.background=key;render()};$('background-options').append(button);
+}
+const openBpm=wireDialog($('bpm-dialog'),$('tap'),$('bpm-close'));
+$('tap').onclick=()=>{
+ if(document.activeElement===$('bpm'))$('bpm').blur();
+ $('bpm-entry').value=s.bpm;$('bpm-entry').setCustomValidity('');openBpm();
+ // Focus synchronously inside the user gesture so iPhone can show its numeric keyboard.
+ $('bpm-entry').focus();$('bpm-entry').select();
+};
+$('bpm-entry').oninput=()=>$('bpm-entry').setCustomValidity('');
+$('bpm-cancel').onclick=()=>$('bpm-dialog').close();
+$('bpm-form').onsubmit=e=>{
+ e.preventDefault();const input=$('bpm-entry'),value=input.value.trim(),number=Number(value);
+ if(!/^\d+$/.test(value)||number<30||number>300){input.setCustomValidity('30〜300の整数を入力してください');input.reportValidity();return}
+ bpm(number);$('bpm-dialog').close();
+};
 $('division').onchange=()=>{s.division=+$('division').value;if(running)stop('分割を変更しました。STARTで再開');render()};$('accent').onchange=()=>{s.accent=$('accent').checked;dots();render()};$('volume').oninput=()=>{s.volume=+$('volume').value;render()};$('mute').onclick=()=>{s.mute=!s.mute;render()};document.addEventListener('visibilitychange',()=>{if(document.hidden&&running)stop('画面を離れたため停止しました。STARTで再開')});window.addEventListener('pagehide',()=>stop());render();dots();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 // Native touch events avoid dependence on Safari's pointer capture / button values.
