@@ -20,7 +20,7 @@ function syncSwing(){
 function syncWeight(){const w=$('weight');w.style.top=weightPosition()+'px';w.setAttribute('aria-valuenow',s.bpm);w.setAttribute('aria-valuetext',s.bpm+' BPM')}
 function save(){try{localStorage.setItem('blue-tempo-v1',JSON.stringify(s))}catch{}}
 function dots(){ $('beats').replaceChildren(...Array.from({length:parseInt(s.meter)},(_,i)=>{let d=document.createElement('i');if(i===0&&s.accent)d.className='first';return d}))}
-function render(){ syncBackground();syncWeight();$('bpm').value=s.bpm;$('meter').textContent=s.meter;$('meter').setAttribute('aria-label','拍子を選択 現在 '+s.meter);for(const button of $('meter-grid').children)button.setAttribute('aria-pressed',button.dataset.meter===s.meter); for(const button of $('timbre-options').children)button.setAttribute('aria-pressed',button.dataset.timbre===s.timbre);$('accent').checked=s.accent;$('accent-state').textContent=s.accent?'ON':'OFF';$('volume').value=s.volume;$('mute').textContent=s.mute?'音 OFF':'音 ON';$('mute').setAttribute('aria-pressed',s.mute);$('mark').textContent=s.bpm<60?'Largo':s.bpm<76?'Adagio':s.bpm<108?'Andante':s.bpm<120?'Moderato':s.bpm<168?'Allegro':'Presto';if(master)master.gain.setValueAtTime(s.mute?0:s.volume/100,ctx.currentTime);save()}
+function render(){ syncBackground();syncWeight();$('bpm').textContent=s.bpm;$('meter').textContent=s.meter;$('meter').setAttribute('aria-label','拍子を選択 現在 '+s.meter);for(const button of $('meter-grid').children)button.setAttribute('aria-pressed',button.dataset.meter===s.meter); for(const button of $('timbre-options').children)button.setAttribute('aria-pressed',button.dataset.timbre===s.timbre);$('accent').checked=s.accent;$('accent-state').textContent=s.accent?'ON':'OFF';$('volume').value=s.volume;$('mute').textContent=s.mute?'音 OFF':'音 ON';$('mute').setAttribute('aria-pressed',s.mute);$('mark').textContent=s.bpm<60?'Largo':s.bpm<76?'Adagio':s.bpm<108?'Andante':s.bpm<120?'Moderato':s.bpm<168?'Allegro':'Presto';if(master)master.gain.setValueAtTime(s.mute?0:s.volume/100,ctx.currentTime);save()}
 function bpm(n){if(Number.isFinite(n)){s.bpm=clamp(Math.round(n),30,300);render()}}
 async function ensureAudio(){
  const Audio=window.AudioContext||window.webkitAudioContext;
@@ -55,8 +55,18 @@ function schedule(){
 function animate(){if(!running)return;const t=ctx.currentTime-(ctx.outputLatency||0);while(queue.length&&queue[0].time<=t){lastBeat=queue.shift();[...$('beats').children].forEach((d,i)=>d.classList.toggle('active',i===lastBeat.beat))}if(drag){$('arm').style.transform='rotate(0deg)'}else if(lastBeat){const progress=clamp((t-lastBeat.time)/lastBeat.duration,0,1);const angle=swingAngle*Math.cos(progress*Math.PI)*(lastBeat.serial%2?-1:1);$('arm').style.transform=`rotate(${angle}deg)`}frame=requestAnimationFrame(animate)}
 async function start(){if(running||starting)return;starting=true;$('start').disabled=true;try{await ensureAudio();if(document.hidden)return;render();running=true;tick=0;queue=[];lastBeat=null;next=ctx.currentTime+.06;$('start').textContent='STOP';$('start').classList.add('playing');$('status').textContent='';schedule();timer=setInterval(schedule,25);animate();if(navigator.wakeLock)navigator.wakeLock.request('screen').then(w=>{if(running)wake=w;else w.release()}).catch(()=>{});ctx.onstatechange=()=>{if(running&&ctx.state!=='running')stop('音声が中断されました。STARTで再開')}}catch(e){$('status').textContent=e.message}finally{starting=false;$('start').disabled=false}}
 function stop(message=''){running=false;clearInterval(timer);cancelAnimationFrame(frame);for(const o of voices){try{o.stop()}catch{}}voices.clear();queue=[];lastBeat=null;$('start').textContent='START';$('start').classList.remove('playing');$('arm').style.transform='rotate(0deg)';[...$('beats').children].forEach(d=>d.classList.remove('active'));$('status').textContent=message;if(wake){wake.release().catch(()=>{});wake=null}}
-$('start').onclick=()=>running?stop():start();$('bpm').onfocus=()=>$('bpm').select();$('bpm').onblur=()=>bpm(Number($('bpm').value)||s.bpm);$('bpm').onkeydown=e=>{if(e.key==='Enter')$('bpm').blur()};
-for(const [id,delta] of [['minus',-1],['plus',1]]){let delay,repeat;const end=()=>{clearTimeout(delay);clearInterval(repeat)};$(id).onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();$(id).setPointerCapture(e.pointerId);bpm(s.bpm+delta);delay=setTimeout(()=>{repeat=setInterval(()=>bpm(s.bpm+delta),75)},400)};$(id).onpointerup=end;$(id).onpointercancel=end;$(id).onlostpointercapture=end;$(id).onclick=e=>{if(e.detail===0)bpm(s.bpm+delta)}}
+$('start').onclick=()=>running?stop():start();
+for(const [id,delta] of [['minus',-1],['plus',1]]){
+ let delay,repeat;
+ const end=()=>{clearTimeout(delay);clearInterval(repeat)};
+ const begin=()=>{end();bpm(s.bpm+delta);delay=setTimeout(()=>{repeat=setInterval(()=>bpm(s.bpm+delta),75)},400)};
+ $(id).onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();$(id).setPointerCapture(e.pointerId);begin()};
+ $(id).onpointerup=end;$(id).onpointercancel=end;$(id).onlostpointercapture=end;
+ $(id).onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!e.repeat)begin()}};
+ $(id).onkeyup=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();end()}};
+ $(id).onblur=end;window.addEventListener('blur',end);
+ $(id).onclick=e=>{if(e.detail===0)bpm(s.bpm+delta)};
+}
 // The native modal traps focus and supports Escape; selection returns focus to the trigger.
 const meterDialog=$('meter-dialog');
 for(const meter of METERS){
@@ -146,7 +156,6 @@ function confirmBpm(){
  bpm(Number(bpmDraft));$('bpm-dialog').close();releaseModalScroll();
 }
 $('tap').onclick=()=>{
- if(document.activeElement===$('bpm'))$('bpm').blur();
  bpmDraft=String(s.bpm);replaceDraft=true;syncDraft();openBpm();
  // Buttons/output only: opening TAP never focuses an editable element.
  $('bpm-close').focus();
@@ -157,6 +166,7 @@ $('bpm-delete').onclick=deleteDigit;
 $('bpm-confirm').onclick=confirmBpm;
 $('bpm-cancel').onclick=()=>{$('bpm-dialog').close();releaseModalScroll()};
 $('bpm-dialog').addEventListener('keydown',e=>{
+ if(!$('bpm-dialog').open)return;
  if(e.ctrlKey||e.metaKey||e.altKey||e.isComposing)return;
  if(/^\d$/.test(e.key)){e.preventDefault();digit(e.key)}
  else if(e.key==='Backspace'||e.key==='Delete'){e.preventDefault();deleteDigit()}
@@ -170,7 +180,6 @@ $('accent').onchange=()=>{s.accent=$('accent').checked;dots();render()};$('volum
 const weight=$('weight');
 function beginDrag(kind,id,y){
  if(drag)return false;
- if(document.activeElement===$('bpm'))$('bpm').blur();
  const travel=weightTravel();
  if(travel<=0)return false;
  drag={kind,id,y,bpm:s.bpm,travel};
