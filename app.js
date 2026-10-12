@@ -44,37 +44,79 @@ meterDialog.addEventListener('click',e=>{if(e.target!==meterDialog)return;const 
 meterDialog.addEventListener('close',()=>{document.body.style.overflow='';$('meter').focus()});
 $('division').onchange=()=>{s.division=+$('division').value;if(running)stop('分割を変更しました。STARTで再開');render()};$('accent').onchange=()=>{s.accent=$('accent').checked;dots();render()};$('volume').oninput=()=>{s.volume=+$('volume').value;render()};$('mute').onclick=()=>{s.mute=!s.mute;render()};document.addEventListener('visibilitychange',()=>{if(document.hidden&&running)stop('画面を離れたため停止しました。STARTで再開')});window.addEventListener('pagehide',()=>stop());render();dots();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
-// Pointer capture keeps the handle attached to the finger outside its hit area.
+// Native touch events avoid dependence on Safari's pointer capture / button values.
+// Both input paths share the same measured range and BPM conversion.
 const weight=$('weight');
-weight.addEventListener('pointerdown',e=>{
- if(e.button!==0||drag)return;
- e.preventDefault();
+function beginDrag(kind,id,y){
+ if(drag)return false;
  if(document.activeElement===$('bpm'))$('bpm').blur();
- drag={id:e.pointerId,y:e.clientY,bpm:s.bpm};
+ const travel=weightTravel();
+ if(travel<=0)return false;
+ drag={kind,id,y,bpm:s.bpm,travel};
  $('arm').style.transform='rotate(0deg)';
  weight.classList.add('dragging');
- weight.setPointerCapture(e.pointerId);
-});
-weight.addEventListener('pointermove',e=>{
- if(!drag||e.pointerId!==drag.id)return;
- e.preventDefault();
- const travel=weightTravel();
- if(travel>0)bpm(drag.bpm+(e.clientY-drag.y)/travel*270);
-});
-function finishDrag(e){
- if(!drag||e.pointerId!==drag.id)return;
- drag=null;weight.classList.remove('dragging');
- if(weight.hasPointerCapture(e.pointerId))weight.releasePointerCapture(e.pointerId);
+ return true;
+}
+function moveDrag(y){
+ bpm(drag.bpm+(y-drag.y)/drag.travel*270);
+}
+function finishDrag(){
+ if(!drag)return;
+ const previous=drag;drag=null;
+ weight.classList.remove('dragging');
+ if(previous.kind==='pointer'){
+  try{if(weight.hasPointerCapture(previous.id))weight.releasePointerCapture(previous.id)}catch{}
+ }
  if(!running)$('arm').style.transform='rotate(0deg)';
 }
-for(const event of ['pointerup','pointercancel','lostpointercapture'])weight.addEventListener(event,finishDrag);
+weight.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='touch'||e.button!==0)return;
+ if(!beginDrag('pointer',e.pointerId,e.clientY))return;
+ e.preventDefault();
+ // Document listeners keep dragging functional if capture is unavailable or rejected.
+ try{weight.setPointerCapture(e.pointerId)}catch{}
+});
+document.addEventListener('pointermove',e=>{
+ if(drag?.kind!=='pointer'||e.pointerId!==drag.id)return;
+ e.preventDefault();moveDrag(e.clientY);
+},{passive:false});
+for(const event of ['pointerup','pointercancel'])document.addEventListener(event,e=>{
+ if(drag?.kind==='pointer'&&e.pointerId===drag.id)finishDrag();
+});
+weight.addEventListener('lostpointercapture',e=>{
+ if(drag?.kind==='pointer'&&e.pointerId===drag.id)finishDrag();
+});
+weight.addEventListener('touchstart',e=>{
+ if(drag){e.preventDefault();return}
+ const touch=e.changedTouches[0];
+ if(touch&&beginDrag('touch',touch.identifier,touch.clientY))e.preventDefault();
+},{passive:false});
+document.addEventListener('touchmove',e=>{
+ if(drag?.kind!=='touch')return;
+ // Prevent scrolling only while this handle owns a touch gesture.
+ e.preventDefault();
+ const touch=Array.from(e.changedTouches).find(t=>t.identifier===drag.id);
+ if(touch)moveDrag(touch.clientY);
+},{passive:false});
+for(const event of ['touchend','touchcancel'])document.addEventListener(event,e=>{
+ if(drag?.kind!=='touch')return;
+ if(Array.from(e.changedTouches).some(t=>t.identifier===drag.id)){
+  e.preventDefault();finishDrag();
+ }
+},{passive:false});
+window.addEventListener('blur',finishDrag);
+window.addEventListener('pagehide',finishDrag);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)finishDrag()});
 weight.addEventListener('keydown',e=>{
  const delta={ArrowDown:1,ArrowUp:-1,ArrowRight:1,ArrowLeft:-1,PageDown:10,PageUp:-10}[e.key];
  if(delta!==undefined||e.key==='Home'||e.key==='End'){
   e.preventDefault();bpm(e.key==='Home'?30:e.key==='End'?300:s.bpm+delta);
  }
 });
-function syncGeometry(){syncWeight();syncSwing()}
+function syncGeometry(){
+ if(drag&&Math.abs(weightTravel()-drag.travel)>1)finishDrag();
+ syncWeight();syncSwing();
+}
 new ResizeObserver(syncGeometry).observe(document.querySelector('.pendulum'));
 window.addEventListener('resize',syncGeometry);
 syncGeometry();
