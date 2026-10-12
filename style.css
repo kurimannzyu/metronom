@@ -11,7 +11,9 @@
 .round{background:#f7f9fb;box-shadow:0 3px 10px #3c516b08}.controls button{background:#f6f8fa}#mute[aria-pressed="true"]{background:#f4e3c4;border-color:#dfbe82}#start{box-shadow:0 4px 12px #45617b0a}button:disabled{opacity:.5}
 
 /* Compact trigger and a thumb-friendly 4 by 3 meter chooser. */
-.controls #meter{min-width:54px;padding:0 8px;border:0;background:transparent;font-size:18px;letter-spacing:0}
+.controls #meter{min-width:96px;min-height:44px;padding:0 12px;border:1px solid #bac8d1;border-radius:22px;background:#f6f8fa;font-size:18px;letter-spacing:0;display:inline-flex;align-items:center;justify-content:center;gap:12px}
+.controls #meter:after{content:"";width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin-top:-4px;flex-shrink:0}
+.controls #meter:active{background:#dceaf2}
 #meter-dialog{width:min(440px,calc(100vw - 28px));max-height:calc(100svh - 32px);padding:18px;border:1px solid #d4dbe1;border-radius:25px;background:#f9fafb;color:#38434c;box-shadow:0 18px 70px #38434c26;overflow:auto}
 #meter-dialog::backdrop{background:#38434c55;backdrop-filter:blur(3px)}
 .meter-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.meter-heading h2{font-size:14px;font-weight:500;margin:0}.meter-heading button{width:44px;height:44px;border:0;border-radius:50%;font-size:28px;background:#e9edf0}

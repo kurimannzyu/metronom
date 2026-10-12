@@ -61,12 +61,27 @@ async function checkPosition(page) {
   await page.locator('#division').selectOption('1');
   await page.locator('.sound-settings summary').click();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await page.waitForFunction(async () => (await caches.open('blue-tempo-v7')).match('./index.html').then(Boolean));
+  await page.waitForFunction(async () => (await caches.open('blue-tempo-v8')).match('./index.html').then(Boolean));
   await context.setOffline(true);
   await page.reload();
   assert.equal(await page.locator('#bpm').inputValue(), '147');
   assert.equal(await page.locator('#start').innerText(), 'START');
   await context.setOffline(false);
+  assert.equal(await page.locator('header').count(), 0);
+  // The arrow/right padding is part of the existing native button's tap target.
+  const meterBox = await page.locator('#meter').boundingBox();
+  assert.ok(meterBox.width >= 96 && meterBox.height >= 44);
+  await page.touchscreen.tap(meterBox.x + meterBox.width - 8, meterBox.y + meterBox.height / 2);
+  assert.equal(await page.locator('#meter-dialog').evaluate(d => d.open), true);
+  await page.locator('[data-meter="12/8"]').click();
+  assert.equal(await page.locator('#meter').innerText(), '12/8');
+  await page.reload();
+  assert.equal(await page.locator('#meter').innerText(), '12/8');
+  await page.locator('#meter').focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#meter-dialog').evaluate(d => d.open), true);
+  await page.locator('[data-meter="4/4"]').click();
+  assert.equal(await page.locator('#meter').innerText(), '4/4');
   const cdp = await context.newCDPSession(page);
   async function touchDrag(delta, running = false) {
     if (running) {
