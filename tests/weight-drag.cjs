@@ -17,8 +17,9 @@ const server = http.createServer(async (req, res) => {
 });
 let browser;
 async function setBpm(page, value) {
-  await page.locator('#bpm').fill(String(value));
-  await page.locator('#bpm').press('Enter');
+  await page.locator('#tap').click();
+  await enterDraft(page, String(value));
+  await page.locator('#bpm-confirm').click();
 }
 async function enterDraft(page, value) {
   await page.locator('#bpm-clear').click();
@@ -31,7 +32,7 @@ async function checkPosition(page) {
   const geometry = await page.locator('#weight').evaluate(weight => {
     const arm = document.querySelector('#arm');
     return { actual: parseFloat(weight.style.top), expected: weight.offsetHeight / 2 +
-      (Number(document.querySelector('#bpm').value) - 30) / 270 * (arm.offsetHeight - weight.offsetHeight) };
+      (Number(document.querySelector('#bpm').textContent) - 30) / 270 * (arm.offsetHeight - weight.offsetHeight) };
   });
   assert.ok(Math.abs(geometry.actual - geometry.expected) < 0.01);
 }
@@ -58,10 +59,17 @@ async function checkPosition(page) {
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  assert.equal(await page.locator('#bpm').inputValue(), '93');
+  assert.equal(await page.locator('#bpm').innerText(), '93');
   assert.equal(await page.locator('#meter').innerText(), '3/4');
   assert.equal(await page.locator('#mute').getAttribute('aria-pressed'), 'true');
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('blue-tempo-v1')).retained), 'legacy');
+  assert.equal(await page.locator('#bpm').evaluate(e=>e.tagName),'DIV');
+  assert.equal(await page.locator('#bpm').evaluate(e=>e.isContentEditable),false);
+  await page.locator('#bpm').tap();
+  assert.equal(await page.evaluate(()=>document.activeElement.tagName==='INPUT'),false);
+  assert.equal(await page.locator('#bpm').innerText(),'93');
+  assert.equal(await page.locator('#bpm-dialog #bpm-title, #bpm-dialog .bpm-range').count(),0);
+  assert.equal(await page.locator('#bpm-confirm').innerText(),'セット');
   assert.equal(await page.locator('.help').count(), 0);
   assert.equal(await page.locator('#status').innerText(), '');
   assert.equal(await page.locator('#status').isVisible(), false);
@@ -70,16 +78,16 @@ async function checkPosition(page) {
   await page.locator('#volume').fill('41');
   await page.locator('#accent').uncheck();
   await page.reload();
-  assert.equal(await page.locator('#bpm').inputValue(), '147');
+  assert.equal(await page.locator('#bpm').innerText(), '147');
   await page.locator('#settings-open').click();
   assert.equal(await page.locator('#volume').inputValue(), '41');
   assert.equal(await page.locator('#accent').isChecked(), false);
   await page.locator('#settings-close').click();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await page.waitForFunction(async () => (await caches.open('blue-tempo-v10')).match('./index.html').then(Boolean));
+  await page.waitForFunction(async () => (await caches.open('blue-tempo-v11')).match('./index.html').then(Boolean));
   await context.setOffline(true);
   await page.reload();
-  assert.equal(await page.locator('#bpm').inputValue(), '147');
+  assert.equal(await page.locator('#bpm').innerText(), '147');
   assert.equal(await page.locator('#start').innerText(), 'START');
   await context.setOffline(false);
   assert.equal(await page.locator('header').count(), 0);
@@ -128,25 +136,25 @@ async function checkPosition(page) {
   assert.equal(await page.locator('#bpm-dialog input').count(),0);
   assert.equal(await page.evaluate(()=>document.activeElement.tagName==='INPUT'),false);
   await enterDraft(page,'200');await page.locator('#bpm-cancel').click();
-  assert.equal(await page.locator('#bpm').inputValue(),'120');
+  assert.equal(await page.locator('#bpm').innerText(),'120');
   for (const invalid of ['29','301','abc','']) {
     await page.locator('#tap').click();await enterDraft(page,invalid);
     assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#bpm-dialog').evaluate(d=>d.open),true);
-    assert.equal(await page.locator('#bpm').inputValue(),'120');
+    assert.equal(await page.locator('#bpm').innerText(),'120');
     await page.locator('#bpm-close').click();
   }
   for (const valid of ['30','300']) {
     await page.locator('#tap').click();await enterDraft(page,valid);await page.keyboard.press('Enter');
-    assert.equal(await page.locator('#bpm').inputValue(),valid);await checkPosition(page);
+    assert.equal(await page.locator('#bpm').innerText(),valid);await checkPosition(page);
   }
   await page.locator('#tap').click();await enterDraft(page,'123');await page.keyboard.press('Escape');
-  assert.equal(await page.locator('#bpm').inputValue(),'300');
+  assert.equal(await page.locator('#bpm').innerText(),'300');
   await setBpm(page,120);await page.locator('#start').click();
   await page.waitForFunction(()=>document.querySelector('#start').textContent==='STOP');
   await page.locator('#tap').tap();await enterDraft(page,'180');await page.locator('#bpm-confirm').tap();
-  assert.equal(await page.locator('#start').innerText(),'STOP');assert.equal(await page.locator('#bpm').inputValue(),'180');
+  assert.equal(await page.locator('#start').innerText(),'STOP');assert.equal(await page.locator('#bpm').innerText(),'180');
   await checkPosition(page);await page.waitForTimeout(900);
   const tempoClicks=await page.evaluate(()=>window.scheduledClicks.slice(-2));
   assert.ok(Math.abs(tempoClicks[1]-tempoClicks[0]-60/180)<0.001);
@@ -185,9 +193,9 @@ async function checkPosition(page) {
   await page.locator('#settings-open').click();await page.touchscreen.tap(5,5);
   assert.equal(await page.locator('#settings-dialog').evaluate(d=>d.open),false);
   await page.locator('#plus').scrollIntoViewIfNeeded();
-  const repeatBox=await page.locator('#plus').boundingBox(), repeatBpm=Number(await page.locator('#bpm').inputValue());
+  const repeatBox=await page.locator('#plus').boundingBox(), repeatBpm=Number(await page.locator('#bpm').innerText());
   await page.mouse.move(repeatBox.x+repeatBox.width/2,repeatBox.y+repeatBox.height/2);await page.mouse.down();await page.waitForTimeout(650);await page.mouse.up();
-  assert.ok(Number(await page.locator('#bpm').inputValue())>=repeatBpm+3);await checkPosition(page);
+  assert.ok(Number(await page.locator('#bpm').innerText())>=repeatBpm+3);await checkPosition(page);
   console.log('PASS: 12 aligned meters; keypad validation/cancel/live audio; modal settings and tabs; six backgrounds and legacy settings preserved; long press');
   // Equal-width controls and touch-only keypad at phone and desktop sizes.
   for (const [width,height] of [[320,568],[375,667],[390,844],[430,932],[1280,800]]) {
@@ -209,7 +217,7 @@ async function checkPosition(page) {
     await page.locator('#bpm-clear').tap();assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
     await enterDraft(page,'145');await page.locator('#bpm-delete').tap();assert.equal(await page.locator('#bpm-entry').innerText(),'14');
     await page.locator('[data-digit="0"]').tap();await page.locator('#bpm-confirm').tap();
-    assert.equal(await page.locator('#bpm').inputValue(),'140');await checkPosition(page);
+    assert.equal(await page.locator('#bpm').innerText(),'140');await checkPosition(page);
   }
   // A distinct desktop context checks native keyboard and mouse interaction.
   const pcContext=await browser.newContext({viewport:{width:1280,height:800}}),pc=await pcContext.newPage();
@@ -217,15 +225,78 @@ async function checkPosition(page) {
   await pc.locator('#tap').click();await pc.keyboard.type('123');assert.equal(await pc.locator('#bpm-entry').innerText(),'123');
   await pc.keyboard.press('Backspace');assert.equal(await pc.locator('#bpm-entry').innerText(),'12');
   await pc.keyboard.press('Delete');assert.equal(await pc.locator('#bpm-entry').innerText(),'1');
-  await pc.keyboard.type('50');await pc.keyboard.press('Enter');assert.equal(await pc.locator('#bpm').inputValue(),'150');
-  await pc.locator('#tap').click();await enterDraft(pc,'200');await pc.keyboard.press('Escape');assert.equal(await pc.locator('#bpm').inputValue(),'150');
-  await pc.locator('#tap').click();await enterDraft(pc,'160');await pc.locator('#bpm-confirm').click();assert.equal(await pc.locator('#bpm').inputValue(),'160');
+  await pc.keyboard.type('50');await pc.keyboard.press('Enter');assert.equal(await pc.locator('#bpm').innerText(),'150');
+  await pc.locator('#tap').click();await enterDraft(pc,'200');await pc.keyboard.press('Escape');assert.equal(await pc.locator('#bpm').innerText(),'150');
+  await pc.locator('#tap').click();await enterDraft(pc,'160');await pc.locator('#bpm-confirm').click();assert.equal(await pc.locator('#bpm').innerText(),'160');
   const pcRect=await pc.locator('#tap').boundingBox();assert.ok(pcRect.width<=120);
   await pc.locator('#settings-open').click();await pc.locator('#sound-tab').focus();await pc.keyboard.press('Tab');
   assert.equal(await pc.locator('#background-tab').evaluate(e=>document.activeElement===e),true);
   await pc.keyboard.press('Space');assert.equal(await pc.locator('#background-tab').getAttribute('aria-selected'),'true');
   await pc.locator('#sound-tab').focus();await pc.keyboard.press('Enter');assert.equal(await pc.locator('#sound-tab').getAttribute('aria-selected'),'true');
   await pc.locator('#background-tab').click();await pc.locator('[data-background="beige"]').click();await pc.keyboard.press('Escape');
+  // All desktop controls support real mouse/keyboard events.
+  await pc.locator('#bpm').click();await pc.keyboard.type('999');
+  assert.equal(await pc.locator('#bpm').innerText(),'160');
+  assert.equal(await pc.locator('#bpm').evaluate(e=>e.isContentEditable||e.tagName==='INPUT'),false);
+  await pc.locator('#tap').focus();await pc.keyboard.press('Space');await pc.keyboard.type('180');await pc.keyboard.press('Enter');
+  assert.equal(await pc.locator('#bpm').innerText(),'180');
+  await pc.locator('#bpm').click();
+  await pc.keyboard.type('123');await pc.keyboard.press('Backspace');await pc.keyboard.press('Enter');
+  assert.equal(await pc.locator('#bpm').innerText(),'180');
+  await pc.locator('#tap').click();assert.equal(await pc.locator('#bpm-entry').innerText(),'180');
+  await enterDraft(pc,'240');await pc.locator('#bpm-cancel').focus();await pc.keyboard.press('Space');
+  assert.equal(await pc.locator('#bpm').innerText(),'180');
+  await pc.locator('#tap').click();await pc.locator('#bpm-close').focus();await pc.keyboard.press('Space');
+  assert.equal(await pc.locator('#bpm-dialog').evaluate(d=>d.open),false);
+  await pc.locator('#plus').focus();await pc.keyboard.press('Enter');assert.equal(await pc.locator('#bpm').innerText(),'181');
+  await pc.keyboard.down('Space');await pc.waitForTimeout(650);await pc.keyboard.up('Space');
+  assert.ok(Number(await pc.locator('#bpm').innerText())>=184);
+  await pc.locator('#minus').focus();const minusStart=Number(await pc.locator('#bpm').innerText());
+  await pc.keyboard.down('Enter');await pc.waitForTimeout(650);await pc.keyboard.up('Enter');
+  assert.ok(Number(await pc.locator('#bpm').innerText())<=minusStart-3);
+  const stable=await pc.locator('#bpm').innerText();await pc.waitForTimeout(150);assert.equal(await pc.locator('#bpm').innerText(),stable);
+  await pc.locator('#mute').focus();const wasMuted=await pc.locator('#mute').getAttribute('aria-pressed');await pc.keyboard.press('Space');
+  assert.notEqual(await pc.locator('#mute').getAttribute('aria-pressed'),wasMuted);await pc.keyboard.press('Enter');
+  assert.equal(await pc.locator('#mute').getAttribute('aria-pressed'),wasMuted);
+  for(const meter of ['1/4','2/4','3/4','4/4','5/4','6/4','3/8','5/8','6/8','7/8','9/8','12/8']){
+    await pc.locator('#meter').focus();await pc.keyboard.press('Enter');
+    await pc.locator(`[data-meter="${meter}"]`).focus();await pc.keyboard.press('Space');
+    assert.equal(await pc.locator('#meter').innerText(),meter);
+    assert.equal(await pc.locator('#beats i').count(),parseInt(meter));
+  }
+  await pc.locator('#settings-open').focus();await pc.keyboard.press('Space');await pc.locator('#sound-tab').focus();await pc.keyboard.press('Space');
+  await pc.locator('#accent').focus();const accentBefore=await pc.locator('#accent').isChecked();await pc.keyboard.press('Space');
+  assert.notEqual(await pc.locator('#accent').isChecked(),accentBefore);
+  await pc.locator('#volume').focus();const volumeBefore=Number(await pc.locator('#volume').inputValue());await pc.keyboard.press('ArrowLeft');
+  assert.equal(Number(await pc.locator('#volume').inputValue()),volumeBefore-1);
+  const slider=await pc.locator('#volume').boundingBox();await pc.mouse.click(slider.x+slider.width*.25,slider.y+slider.height/2);
+  assert.ok(Number(await pc.locator('#volume').inputValue())<volumeBefore-1);
+  await pc.locator('[data-timbre="wood"]').click();assert.equal(await pc.locator('[data-timbre="wood"]').getAttribute('aria-pressed'),'true');
+  await pc.locator('[data-timbre="soft"]').focus();await pc.keyboard.press('Space');assert.equal(await pc.locator('[data-timbre="soft"]').getAttribute('aria-pressed'),'true');
+  await pc.locator('#background-tab').focus();await pc.keyboard.press('Enter');await pc.locator('[data-background="pink"]').focus();await pc.keyboard.press('Space');
+  assert.equal(await pc.locator('[data-background="pink"]').getAttribute('aria-pressed'),'true');
+  await pc.locator('#settings-close').focus();await pc.keyboard.press('Space');assert.equal(await pc.locator('#settings-dialog').evaluate(d=>d.open),false);
+  await setBpm(pc,120);await pc.locator('#start').focus();await pc.keyboard.press('Space');
+  await pc.waitForFunction(()=>document.querySelector('#start').textContent==='STOP');
+  let dragBox;
+  for(let attempt=0;attempt<30;attempt++){
+    dragBox=await pc.locator('#weight').boundingBox();await pc.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height/2);await pc.mouse.down();
+    if(await pc.locator('#weight').evaluate(e=>e.classList.contains('dragging')))break;await pc.mouse.up();
+  }
+  assert.equal(await pc.locator('#weight').evaluate(e=>e.classList.contains('dragging')),true);
+  await pc.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height/2+30,{steps:6});
+  const dragged=Number(await pc.locator('#bpm').innerText());assert.ok(dragged>120);
+  await pc.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height/2-20,{steps:6});
+  assert.ok(Number(await pc.locator('#bpm').innerText())<120);await pc.mouse.up();await checkPosition(pc);
+  assert.equal(await pc.locator('#start').innerText(),'STOP');
+  await setBpm(pc,180);assert.equal(await pc.locator('#start').innerText(),'STOP');await checkPosition(pc);
+  assert.notEqual(await pc.locator('#arm').evaluate(e=>e.style.transform),'');
+  await pc.locator('#weight').focus();await pc.keyboard.press('ArrowDown');assert.equal(await pc.locator('#bpm').innerText(),'181');
+  await pc.keyboard.press('Home');assert.equal(await pc.locator('#bpm').innerText(),'30');
+  await pc.keyboard.press('End');assert.equal(await pc.locator('#bpm').innerText(),'300');
+  await pc.locator('#start').focus();await pc.keyboard.press('Enter');assert.equal(await pc.locator('#start').innerText(),'START');
+  await pc.reload();assert.equal(await pc.locator('#bpm').innerText(),'300');
+  console.log('PASS: read-only BPM and simplified Set modal; all PC controls via keyboard/mouse, holds, live weight drag, no leaked keypad events');
   await pcContext.close();
   // Previous division values remain stored, but never subdivide the beat.
   assert.equal(await page.locator('#division').count(),0);
@@ -299,12 +370,12 @@ async function checkPosition(page) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     }
     assert.equal(await page.locator('#weight').evaluate(w => w.classList.contains('dragging')), true);
-    const before = Number(await page.locator('#bpm').inputValue()), scroll = await page.evaluate(() => scrollY);
+    const before = Number(await page.locator('#bpm').innerText()), scroll = await page.evaluate(() => scrollY);
     const travel = await page.evaluate(() => document.querySelector('#arm').offsetHeight - document.querySelector('#weight').offsetHeight);
     for (let step = 1; step <= 6; step++) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y + delta * step / 6 }] });
     }
-    const after = Number(await page.locator('#bpm').inputValue());
+    const after = Number(await page.locator('#bpm').innerText());
     assert.equal(after, Math.max(30, Math.min(300, Math.round(before + delta / travel * 270))));
     await checkPosition(page);
     assert.equal(await page.evaluate(() => scrollY), scroll);
@@ -370,12 +441,12 @@ async function checkPosition(page) {
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 150, box.y + box.height / 2 + 40, { steps: 6 });
-  assert.ok(Number(await page.locator('#bpm').inputValue()) > 120);
+  assert.ok(Number(await page.locator('#bpm').innerText()) > 120);
   await page.mouse.up();
   await checkPosition(page);
   assert.equal(await page.locator('#weight').evaluate(w => w.classList.contains('dragging')), false);
   assert.deepEqual(errors, []);
-  console.log('PASS: touch hit targets, both drag directions and conversion, no scrolling, live BPM/audio tempo, direct input and +/- synchronization, mouse without capture, four phone sizes');
+  console.log('PASS: touch hit targets, both drag directions and conversion, no scrolling, live BPM/audio tempo, display-only BPM and +/- synchronization, mouse without capture, four phone sizes');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
   if (browser) await browser.close();
   server.close();
