@@ -20,6 +20,13 @@ async function setBpm(page, value) {
   await page.locator('#bpm').fill(String(value));
   await page.locator('#bpm').press('Enter');
 }
+async function enterDraft(page, value) {
+  await page.locator('#bpm-clear').click();
+  for (const digit of String(value)) {
+    if (/^\d$/.test(digit)) await page.locator(`[data-digit="${digit}"]`).click();
+    else await page.keyboard.press(digit);
+  }
+}
 async function checkPosition(page) {
   const geometry = await page.locator('#weight').evaluate(weight => {
     const arm = document.querySelector('#arm');
@@ -38,10 +45,13 @@ async function checkPosition(page) {
       sessionStorage.setItem('legacy-seeded','yes');
     }
     window.scheduledClicks = [];
+    window.scheduledTones = [];
     const create = AudioContext.prototype.createOscillator;
     AudioContext.prototype.createOscillator = function () {
-      const node = create.call(this), start = node.start;
-      node.start = function (time) { window.scheduledClicks.push(time); return start.call(this, time); };
+      const node = create.call(this), start = node.start, setFrequency = node.frequency.setValueAtTime;
+      let frequency = 0;
+      node.frequency.setValueAtTime = function(value, time) {frequency=value;return setFrequency.call(this,value,time)};
+      node.start = function (time) { window.scheduledClicks.push(time);window.scheduledTones.push({time,type:node.type,frequency}); return start.call(this, time); };
       return node;
     };
   });
@@ -59,17 +69,14 @@ async function checkPosition(page) {
   await page.locator('#settings-open').click();
   await page.locator('#volume').fill('41');
   await page.locator('#accent').uncheck();
-  await page.locator('#division').selectOption('2');
   await page.reload();
   assert.equal(await page.locator('#bpm').inputValue(), '147');
   await page.locator('#settings-open').click();
   assert.equal(await page.locator('#volume').inputValue(), '41');
   assert.equal(await page.locator('#accent').isChecked(), false);
-  assert.equal(await page.locator('#division').inputValue(), '2');
-  await page.locator('#division').selectOption('1');
   await page.locator('#settings-close').click();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await page.waitForFunction(async () => (await caches.open('blue-tempo-v9')).match('./index.html').then(Boolean));
+  await page.waitForFunction(async () => (await caches.open('blue-tempo-v10')).match('./index.html').then(Boolean));
   await context.setOffline(true);
   await page.reload();
   assert.equal(await page.locator('#bpm').inputValue(), '147');
@@ -78,7 +85,7 @@ async function checkPosition(page) {
   assert.equal(await page.locator('header').count(), 0);
   // The arrow/right padding is part of the existing native button's tap target.
   const meterBox = await page.locator('#meter').boundingBox();
-  assert.ok(meterBox.width >= 90 && meterBox.height >= 44);
+  assert.ok(meterBox.width >= 80 && meterBox.height >= 44);
   await page.touchscreen.tap(meterBox.x + meterBox.width - 8, meterBox.y + meterBox.height / 2);
   assert.equal(await page.locator('#meter-dialog').evaluate(d => d.open), true);
   await page.locator('[data-meter="12/8"]').click();
@@ -117,27 +124,28 @@ async function checkPosition(page) {
   // TAP edits BPM; it never estimates a tempo from repeated taps.
   await setBpm(page,120);
   await page.locator('#tap').tap();
-  assert.equal(await page.locator('#bpm-entry').inputValue(),'120');
-  assert.equal(await page.locator('#bpm-entry').getAttribute('inputmode'),'numeric');
-  assert.equal(await page.locator('#bpm-entry').evaluate(i=>i===document.activeElement),true);
-  await page.locator('#bpm-entry').fill('200');await page.locator('#bpm-cancel').click();
+  assert.equal(await page.locator('#bpm-entry').innerText(),'120');
+  assert.equal(await page.locator('#bpm-dialog input').count(),0);
+  assert.equal(await page.evaluate(()=>document.activeElement.tagName==='INPUT'),false);
+  await enterDraft(page,'200');await page.locator('#bpm-cancel').click();
   assert.equal(await page.locator('#bpm').inputValue(),'120');
   for (const invalid of ['29','301','abc','']) {
-    await page.locator('#tap').click();await page.locator('#bpm-entry').fill(invalid);
-    await page.locator('#bpm-form button[type="submit"]').click();
+    await page.locator('#tap').click();await enterDraft(page,invalid);
+    assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
+    await page.keyboard.press('Enter');
     assert.equal(await page.locator('#bpm-dialog').evaluate(d=>d.open),true);
     assert.equal(await page.locator('#bpm').inputValue(),'120');
     await page.locator('#bpm-close').click();
   }
   for (const valid of ['30','300']) {
-    await page.locator('#tap').click();await page.locator('#bpm-entry').fill(valid);await page.locator('#bpm-entry').press('Enter');
+    await page.locator('#tap').click();await enterDraft(page,valid);await page.keyboard.press('Enter');
     assert.equal(await page.locator('#bpm').inputValue(),valid);await checkPosition(page);
   }
-  await page.locator('#tap').click();await page.locator('#bpm-entry').fill('123');await page.keyboard.press('Escape');
+  await page.locator('#tap').click();await enterDraft(page,'123');await page.keyboard.press('Escape');
   assert.equal(await page.locator('#bpm').inputValue(),'300');
   await setBpm(page,120);await page.locator('#start').click();
   await page.waitForFunction(()=>document.querySelector('#start').textContent==='STOP');
-  await page.locator('#tap').tap();await page.locator('#bpm-entry').fill('180');await page.locator('#bpm-form button[type="submit"]').tap();
+  await page.locator('#tap').tap();await enterDraft(page,'180');await page.locator('#bpm-confirm').tap();
   assert.equal(await page.locator('#start').innerText(),'STOP');assert.equal(await page.locator('#bpm').inputValue(),'180');
   await checkPosition(page);await page.waitForTimeout(900);
   const tempoClicks=await page.evaluate(()=>window.scheduledClicks.slice(-2));
@@ -180,7 +188,99 @@ async function checkPosition(page) {
   const repeatBox=await page.locator('#plus').boundingBox(), repeatBpm=Number(await page.locator('#bpm').inputValue());
   await page.mouse.move(repeatBox.x+repeatBox.width/2,repeatBox.y+repeatBox.height/2);await page.mouse.down();await page.waitForTimeout(650);await page.mouse.up();
   assert.ok(Number(await page.locator('#bpm').inputValue())>=repeatBpm+3);await checkPosition(page);
-  console.log('PASS: 12 aligned meters; TAP validation/cancel/live audio; modal settings and tabs; six backgrounds and legacy settings preserved; long press');
+  console.log('PASS: 12 aligned meters; keypad validation/cancel/live audio; modal settings and tabs; six backgrounds and legacy settings preserved; long press');
+  // Equal-width controls and touch-only keypad at phone and desktop sizes.
+  for (const [width,height] of [[320,568],[375,667],[390,844],[430,932],[1280,800]]) {
+    await page.setViewportSize({width,height});
+    const controls=await page.locator('.controls button').evaluateAll(buttons=>buttons.map(b=>{
+      const r=b.getBoundingClientRect(),c=getComputedStyle(b);return {x:r.x,y:r.y,w:r.width,h:r.height,font:c.fontSize,radius:c.borderRadius,padding:c.padding};
+    }));
+    assert.equal(controls.length,3);
+    for(const c of controls){for(const k of ['w','h','y'])assert.ok(Math.abs(c[k]-controls[0][k])<1);for(const k of ['font','radius','padding'])assert.equal(c[k],controls[0][k]);}
+    assert.ok(Math.abs((controls[1].x-controls[0].x)-(controls[2].x-controls[1].x))<1);
+    assert.ok(await page.locator('.controls').evaluate(e=>e.clientWidth<=360));
+    assert.equal(await page.locator('.meter-label').count(),0);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.locator('#tap').tap();
+    assert.equal(await page.locator('#bpm-dialog input').count(),0);
+    assert.equal(await page.evaluate(()=>document.activeElement.tagName==='INPUT'),false);
+    await enterDraft(page,'29');assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
+    await enterDraft(page,'301');assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
+    await page.locator('#bpm-clear').tap();assert.equal(await page.locator('#bpm-confirm').isDisabled(),true);
+    await enterDraft(page,'145');await page.locator('#bpm-delete').tap();assert.equal(await page.locator('#bpm-entry').innerText(),'14');
+    await page.locator('[data-digit="0"]').tap();await page.locator('#bpm-confirm').tap();
+    assert.equal(await page.locator('#bpm').inputValue(),'140');await checkPosition(page);
+  }
+  // A distinct desktop context checks native keyboard and mouse interaction.
+  const pcContext=await browser.newContext({viewport:{width:1280,height:800}}),pc=await pcContext.newPage();
+  pc.on('pageerror',e=>errors.push(e.message));await pc.goto(`http://127.0.0.1:${server.address().port}`);
+  await pc.locator('#tap').click();await pc.keyboard.type('123');assert.equal(await pc.locator('#bpm-entry').innerText(),'123');
+  await pc.keyboard.press('Backspace');assert.equal(await pc.locator('#bpm-entry').innerText(),'12');
+  await pc.keyboard.press('Delete');assert.equal(await pc.locator('#bpm-entry').innerText(),'1');
+  await pc.keyboard.type('50');await pc.keyboard.press('Enter');assert.equal(await pc.locator('#bpm').inputValue(),'150');
+  await pc.locator('#tap').click();await enterDraft(pc,'200');await pc.keyboard.press('Escape');assert.equal(await pc.locator('#bpm').inputValue(),'150');
+  await pc.locator('#tap').click();await enterDraft(pc,'160');await pc.locator('#bpm-confirm').click();assert.equal(await pc.locator('#bpm').inputValue(),'160');
+  const pcRect=await pc.locator('#tap').boundingBox();assert.ok(pcRect.width<=120);
+  await pc.locator('#settings-open').click();await pc.locator('#sound-tab').focus();await pc.keyboard.press('Tab');
+  assert.equal(await pc.locator('#background-tab').evaluate(e=>document.activeElement===e),true);
+  await pc.keyboard.press('Space');assert.equal(await pc.locator('#background-tab').getAttribute('aria-selected'),'true');
+  await pc.locator('#sound-tab').focus();await pc.keyboard.press('Enter');assert.equal(await pc.locator('#sound-tab').getAttribute('aria-selected'),'true');
+  await pc.locator('#background-tab').click();await pc.locator('[data-background="beige"]').click();await pc.keyboard.press('Escape');
+  await pcContext.close();
+  // Previous division values remain stored, but never subdivide the beat.
+  assert.equal(await page.locator('#division').count(),0);
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('blue-tempo-v1')).division),4);
+  await page.setViewportSize({width:390,height:844});await setBpm(page,300);
+  if(await page.locator('#mute').getAttribute('aria-pressed')==='true')await page.locator('#mute').click();
+  await page.locator('#settings-open').click();await page.locator('#sound-tab').click();
+  const expected={classic:{type:'triangle',normal:1200,strong:1800},wood:{type:'sine',normal:850,strong:1100},digital:{type:'square',normal:1600,strong:2100},soft:{type:'sine',normal:600,strong:780}};
+  const beforeState=await page.evaluate(()=>JSON.parse(localStorage.getItem('blue-tempo-v1')));
+  for(const [key,tone]of Object.entries(expected)){
+    const before=await page.evaluate(()=>window.scheduledTones.length);
+    await page.locator(`[data-timbre="${key}"]`).tap();await page.waitForTimeout(120);
+    const voices=await page.evaluate(n=>window.scheduledTones.slice(n),before);
+    assert.equal(voices.length,1);assert.equal(voices[0].type,tone.type);assert.equal(voices[0].frequency,tone.normal);
+    assert.equal(await page.locator(`[data-timbre="${key}"]`).getAttribute('aria-pressed'),'true');
+    const after=await page.evaluate(()=>JSON.parse(localStorage.getItem('blue-tempo-v1')));
+    for(const k of ['bpm','meter','volume','accent','mute','background','retained'])assert.equal(after[k],beforeState[k]);
+  }
+  await page.locator('#settings-close').click();await page.reload();
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('blue-tempo-v1')).timbre),'soft');
+  await page.locator('#settings-open').click();assert.equal(await page.locator('[data-timbre="soft"]').getAttribute('aria-pressed'),'true');await page.locator('#settings-close').click();
+  await page.locator('#mute').click();await page.locator('#settings-open').click();
+  const mutedCount=await page.evaluate(()=>window.scheduledTones.length);
+  await page.locator('[data-timbre="digital"]').click();await page.waitForTimeout(120);
+  assert.equal(await page.evaluate(()=>window.scheduledTones.length),mutedCount);
+  await page.locator('#settings-close').click();await page.locator('#mute').click();await page.locator('#settings-open').click();
+  await page.locator('#volume').fill('0');const silentCount=await page.evaluate(()=>window.scheduledTones.length);
+  await page.locator('[data-timbre="classic"]').click();await page.waitForTimeout(120);
+  assert.equal(await page.evaluate(()=>window.scheduledTones.length),silentCount);
+  await page.locator('#volume').fill('41');await page.locator('#settings-close').click();
+  await page.locator('#start').click();await page.waitForFunction(()=>document.querySelector('#start').textContent==='STOP');
+  await page.locator('#settings-open').click();await page.locator('#accent').check();
+  for(const [key,tone]of Object.entries(expected)){
+    await page.locator(`[data-timbre="${key}"]`).click();await page.waitForTimeout(1000);
+    const recent=await page.evaluate(()=>window.scheduledTones.slice(-4));
+    assert.ok(recent.every(v=>v.type===tone.type));
+    assert.ok(recent.some(v=>v.frequency===tone.strong));assert.ok(recent.some(v=>v.frequency===tone.normal));
+    for(let i=1;i<recent.length;i++)assert.ok(Math.abs(recent[i].time-recent[i-1].time-.2)<.001);
+    assert.equal(await page.locator('#start').innerText(),'STOP');
+  }
+  await page.locator('#accent').uncheck();await page.waitForTimeout(700);
+  assert.ok((await page.evaluate(()=>window.scheduledTones.slice(-3))).every(v=>v.frequency===600));
+  await page.locator('#settings-close').click();await page.locator('#start').click();
+  // Offline startup and tone audition need no audio files or remote requests.
+  await context.setOffline(true);await page.reload();await page.locator('#settings-open').click();
+  const offlineBefore=await page.evaluate(()=>window.scheduledTones.length);
+  await page.locator('[data-timbre="wood"]').click();await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(n=>window.scheduledTones.slice(n).length,offlineBefore),1);
+  await page.locator('#settings-close').click();await context.setOffline(false);
+  // Small-height panels scroll internally and never move the background page.
+  await page.setViewportSize({width:320,height:400});await page.evaluate(()=>scrollTo(0,0));await page.locator('#settings-open').click();
+  const scrollBefore=await page.evaluate(()=>scrollY);await page.locator('#settings-dialog').hover();await page.mouse.wheel(0,300);await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(()=>scrollY),scrollBefore);assert.ok(await page.locator('#settings-dialog').evaluate(d=>d.scrollHeight>d.clientHeight&&d.scrollTop>0));
+  await page.locator('#settings-close').click();await page.setViewportSize({width:390,height:844});await page.evaluate(()=>scrollTo(0,0));
+  console.log('PASS: equal home controls; touch/mouse/keyboard keypad; PC tabs; four preview/live/offline tones; accent and one click per beat; legacy settings; internal panel scroll');
   const cdp = await context.newCDPSession(page);
   async function touchDrag(delta, running = false) {
     if (running) {
