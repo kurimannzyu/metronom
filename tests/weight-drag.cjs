@@ -44,6 +44,29 @@ async function checkPosition(page) {
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  assert.equal(await page.locator('.help').count(), 0);
+  assert.equal(await page.locator('#status').innerText(), '');
+  assert.equal(await page.locator('#status').isVisible(), false);
+  await setBpm(page, 147);
+  await page.locator('.sound-settings summary').click();
+  await page.locator('#volume').fill('41');
+  await page.locator('#accent').uncheck();
+  await page.locator('#division').selectOption('2');
+  await page.reload();
+  assert.equal(await page.locator('#bpm').inputValue(), '147');
+  await page.locator('.sound-settings summary').click();
+  assert.equal(await page.locator('#volume').inputValue(), '41');
+  assert.equal(await page.locator('#accent').isChecked(), false);
+  assert.equal(await page.locator('#division').inputValue(), '2');
+  await page.locator('#division').selectOption('1');
+  await page.locator('.sound-settings summary').click();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  await page.waitForFunction(async () => (await caches.open('blue-tempo-v7')).match('./index.html').then(Boolean));
+  await context.setOffline(true);
+  await page.reload();
+  assert.equal(await page.locator('#bpm').inputValue(), '147');
+  assert.equal(await page.locator('#start').innerText(), 'START');
+  await context.setOffline(false);
   const cdp = await context.newCDPSession(page);
   async function touchDrag(delta, running = false) {
     if (running) {
@@ -108,7 +131,12 @@ async function checkPosition(page) {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   assert.equal(await page.locator('#weight').evaluate(w => w.classList.contains('dragging')), false);
   await touchDrag(-20);
-  await page.locator('.help summary').click();
+  // Make the test page scrollable without relying on product help content.
+  await page.evaluate(() => {
+    const spacer = document.createElement('div');
+    spacer.style.height = '600px';
+    document.body.append(spacer);
+  });
   await page.evaluate(() => scrollTo(0, 0));
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 10, y: 600 }] });
   for (let step = 1; step <= 6; step++) {
@@ -116,6 +144,9 @@ async function checkPosition(page) {
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   assert.ok(await page.evaluate(() => scrollY > 0));
+  await page.evaluate(() => scrollTo(0, 0));
+  // Let native touch-scroll momentum settle before measuring mouse coordinates.
+  await page.waitForTimeout(350);
   await page.evaluate(() => scrollTo(0, 0));
   // Non-touch pointers must remain usable even if Safari rejects pointer capture.
   await page.setViewportSize({ width: 1280, height: 800 });
